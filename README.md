@@ -9,7 +9,7 @@ In your project's podfile add the GlympseApi pod
 
 ```
 target 'YourApp' do
-  pod 'GlympseApi'
+  pod 'GlympseAPI'
   ...
 end
 ```
