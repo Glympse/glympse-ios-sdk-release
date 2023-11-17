@@ -23,13 +23,13 @@ let package = Package(
         // Targets can depend on other targets in this package, and on products in packages this package depends on.
         .binaryTarget(
             name: "GlympseKit",
-            url: "https://github.com/Glympse/glympse-ios-sdk-release/releases/download/2.108.256/GlympseKit.zip",
-            checksum: "8d125ca14c078d9476fe11487570e0f12a88b146513a33f0cb16568400df46e5"
+            url: "https://github.com/Glympse/glympse-ios-sdk-release/releases/download/2.108.258/GlympseKit.zip",
+            checksum: "cb2e832576c27cc636d37d8f3a442c852017f0f9482a1cf88b3cc833308ac8d6"
         ),
         .binaryTarget(
             name: "GlympsePrivateAPI",
-            url: "https://github.com/Glympse/glympse-ios-sdk-release/releases/download/2.108.256/GlympsePrivateAPI.zip",
-            checksum: "4d104e943dda2050386e5f234272dea94320ca16e91eed9d83020f7edcaae45e"
+            url: "https://github.com/Glympse/glympse-ios-sdk-release/releases/download/2.108.258/GlympsePrivateAPI.zip",
+            checksum: "0b8318e652d753373e80f15ecaf7549c713e214aaac6022d4038c53205817cad"
         ),
     ]
 )
