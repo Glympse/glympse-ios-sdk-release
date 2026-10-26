@@ -1,0 +1,176 @@
+# Glympse Core SDK for iOS: API outline (llms-full.txt)
+
+Companion to AGENTS.md. This is an outline of the public API surface of the GlympseKit (Objective-C) framework for the
+core platform. Selectors are the ObjC names; Swift imports them with the usual renaming (`sendTicket:` -> `send(_:)`,
+`exemptFromConsent:` -> `exempt(fromConsent:)`, `addInvite:` -> `add(_:)`, `createGlympseWithNSString:withNSString:` ->
+`createGlympse(with:with:)`, `decodeInviteWithNSString:withInt:` -> `decodeInvite(with:with:)`; `getX` stays `getX()`).
+Verify exact signatures in the framework headers before relying on an item here. Not covered: groups, cards, POIs,
+triggers, place search, chat, customer pickups, linked accounts, directions/route planning, map and UI controls.
+
+Constants are class methods. Swift lowercases the text before the first underscore and keeps the rest:
+`GlyGlympseEvents.platform_STARTED()`, `GlyGlympseConstants.invite_TYPE_LINK()`, `GlyCoreConstants.location_PERMISSION_ALWAYS()`.
+In ObjC they are `[GlyGlympseEvents PLATFORM_STARTED]`. Below, names are written without the class prefix.
+
+## 0. Module
+- GlympseKit: GlyGlympseFactory, GlyGlympse, GlyConfig, GlyConsentManager, GlyUserManager, GlyUser, GlyUserTicket,
+  GlyHistoryManager, GlyTicket, GlyInvite, GlyPlace, GlyLocationManager, GlyNetworkManager, GlyBatteryManager,
+  GlyEventListener, GlyEventSink, GlyImage, GlyTrack, GlyArray<T>, GlyPrimitive, GlyCommon, GlyGlympseConstants,
+  GlyGlympseEvents, GlyCoreConstants. Import only `GlympseKit`
+
+## 1. Install
+- Swift Package Manager: https://github.com/Glympse/glympse-ios-sdk-release, product `GlympseKit`. Package minimum iOS 12.
+  Use the latest release
+
+## 2. GlyGlympseFactory (class methods)
+- createGlympseWithNSString:withNSString: (server, apiKey) -> GlyGlympse (a prefix overload exists)
+- createTicket:message:destination: (durationMs, message?, GlyPlace?) -> GlyTicket
+- createInviteWithInt:withNSString:withNSString: (type, name?, address) -> GlyInvite; a variant takes a subtype;
+  createPublicInvite:
+- createRequest:invite:; createPlace:longitude:name:; createAddress:...; createImage:
+- createTrackBuilder; account profile helpers (createPhoneAccountProfile:, createEmailAccountProfile:, ...)
+- Never implement model protocols yourself; obtain them from here or from the platform
+
+## 3. GlyGlympse (a GlyEventSink: add / remove listener)
+Lifecycle and account:
+- start: once per instance. Silently returns if server or API key is empty. Fires PLATFORM_STARTED synchronously
+- stop: posts to the main thread if needed; never call from inside eventsOccurred. Instance dead afterwards
+- isStarted, isFirstLaunch (valid right after creation; resets after logout), hasUserAccount
+- logout -> BOOL: NO while started. Wipes account, nickname, avatar, history, consent; next start creates a new account
+- login: (GlyPrimitive profile): before first start only; recovers an existing account; ignored if an account exists.
+  confirmAccount:profile: sends a confirmation code, returns a sink
+- setActive: (BOOL) -> int: reference counted; returns the count. start resets it to 0. isActive
+- getAccessToken: short-lived; query each time; nil until PLATFORM_LOGIN_SUCCEEDED
+- getTime: server time in ms. getApiVersion: "major.minor.build"
+Configuration BEFORE start (none persisted): setHandler:, setSmsSendMode:, enableSmsScraping: (Android only feature),
+setEtaMode: (ETA_MODE_EXTERNAL default | INTERNAL), setRestoreHistory: (default NO), setHistoryLookback:(ms),
+allowSiblingTickets: (default NO), enableInviteViewersTracking:, setBrand: (subcategory of the API key for invite branding)
+Managers (most are nil before start): getConfig and getConsentManager work before start. After start: getUserManager,
+getHistoryManager, getLocationManager, getNetworkManager, getBatteryManager, getDirectionsManager, getGroupManager,
+getCardManager, getPoiManager, ...
+Invites: decodeInviteWithNSString:withInt: (code, mode) and a variant with an invite -> GlyEventSink;
+openUrl:mode:invite: -> BOOL; extractInviteCodes: and getInviteAspect: are thread-safe; cleanupInviteCode:,
+compareInviteCodes:code2:; viewTicket: (GlyUserTicket) -> GlyTicket?
+Tickets: sendTicket: -> BOOL; requestTicket:
+Push: registerDeviceTokenWithNSString: (token; default type apple_background) / registerDeviceTokenWithNSString:withNSString:
+(type, token); both are ignored until started. unregisterDeviceToken, hasValidDeviceToken,
+handleRemoteNotificationWithNSString: (payload; ignored until started)
+Debug: verify, overrideLoggingLevels:debugLevel:, setLogReceiver:, showDebugView
+
+## 4. GlyConsentManager (available before start)
+- hasConsent, getConsentState (USER_CONSENT_NONE / NO / YES / EXEMPT strings)
+- exemptFromConsent:(BOOL): before start; not persisted
+- grantConsent:partnerId: (CONSENT_TYPE_SUBJECT() | CONSENT_TYPE_GUARDIAN(), partnerId >= 0): starts account creation if none
+- revokeConsent:(partnerId)
+- Events (LISTENER_CONSENT): CONSENT_REQUIRED, CONSENT_SUCCEEDED, CONSENT_FAILED, CONSENT_REVOKE_SUCCEEDED,
+  CONSENT_REVOKE_FAILED, CONSENT_MANAGER_SYNCED, CONSENT_MANAGER_SYNC_FAILED
+- Constants: PRIVACY_POLICY_URL(), TERMS_AND_CONDITIONS_URL(); agreement text key glympse_gdpr_message (glympse_api.strings)
+
+## 5. Events (GlyEventListener eventsOccurred:listener:events:object:)
+`listener` is one of the LISTENER_* values; `events` is a bitmask. Constants live in GlyGlympseEvents. `object` is a
+GlyCommon: cast with `as?` to GlyUser, GlyTicket, GlyUserTicket, NSString, ...
+LISTENER_PLATFORM (=1), on the platform
+- PLATFORM_STARTED, PLATFORM_FIRST_LAUNCH (only the very first start, and again after logout), PLATFORM_STOPPED
+- PLATFORM_ACCOUNT_CREATED (new anonymous account), PLATFORM_ACCOUNT_CREATE_FAILED (fatal: platform stops)
+- PLATFORM_LOGIN_SUCCEEDED (every start), PLATFORM_LOGIN_FAILED (fatal), PLATFORM_SESSION_FAILED (token expired; SDK
+  re-authenticates by itself)
+- PLATFORM_SYNCED_WITH_SERVER (once per instance), PLATFORM_TICKET_SYNC_COMPLETED (after every ticket sync)
+- PLATFORM_USER_ADDED / _REMOVED / _CHANGED / _LIST_REORDERED (object: GlyUser); PLATFORM_LOCATION
+- PLATFORM_TICKET_ADDED / _REMOVED / _CHANGED / _LIST_REORDERED / PLATFORM_TICKET_ARRIVED (object: GlyTicket)
+- PLATFORM_INVITE_TICKET, PLATFORM_INVITE_REQUEST (object: GlyUserTicket)
+- PLATFORM_RATE_LIMITED (server said "rate_limited"; the request is not retried), PLATFORM_STATE_CHANGED (foreground/background change)
+LISTENER_INVITE (=2), on the sink returned by decodeInvite
+- INVITE_DECODED, INVITE_INVALID_CODE (object: the invite code string)
+LISTENER_USER (=3), on a GlyUser
+- USER_NICKNAME_CHANGED, USER_ACTIVE_TICKET_CHANGED, USER_ACTIVE_TICKET_RESIGNING (old active ticket still readable),
+  USER_TICKET_ADDED, USER_TICKET_REMOVED (object: GlyTicket), USER_AVATAR_UPLOADED, USER_AVATAR_NOT_UPLOADED
+LISTENER_TICKET (=4), on a GlyTicket (not fired for expired or sibling tickets, except TICKET_TRANSFERRED)
+- TICKET_CREATED (invite codes not assigned yet), TICKET_FAILED, TICKET_EXPIRED, TICKET_COMPLETED
+- TICKET_INVITE_CREATED (client-delivered invites), TICKET_INVITE_SENT (server-delivered), TICKET_INVITE_UPDATED (viewers,
+  fired periodically while watched), TICKET_INVITE_REMOVED, TICKET_INVITE_FAILED
+- TICKET_REQUEST_CREATED / _SENT / _FAILED
+- TICKET_FIRST_VIEWED, TICKET_INVALID_CODE, TICKET_ARRIVED
+- TICKET_DURATION_CHANGED, _MESSAGE_CHANGED, _DESTINATION_CHANGED, _TRACK_CHANGED, _ETA_CHANGED, _ROUTE_CHANGED,
+  _TRAVEL_MODE_CHANGED, _VISIBILITY_CHANGED
+- TICKET_DATA_APPENDED / _DATA_CLEARED (custom properties), TICKET_TRANSFERRED / _NOT_TRANSFERRED
+LISTENER_NETWORK (=5): NETWORK_START_FAILING, NETWORK_RECOVERED, NETWORK_PUSH_AVAILABILITY_CHANGED, ...
+LISTENER_BATTERY (=6): BATTERY_STATE_CHANGED. LISTENER_IMAGE (=7): IMAGE_CHANGED.
+LISTENER_LOCATION (=8): LOCATION_STATE_CHANGED, LOCATION_ACCURACY_AUTH_CHANGED. LISTENER_CONSENT (=28): see section 4.
+
+## 6. Users and history
+- GlyUserManager: getSelf, getUsers (index 0 is self), getStandaloneUsers, findUserByUserId:, findUserByInviteCode:,
+  findTicketByInviteCode:, startTracking: / stopTracking: (reference counted; start returns the count, -1 if the user is
+  unknown or self), startTrackingAll, stopTrackingAll:, getTracking, anyActiveTracked, setUserTrackingMode:
+  (USER_TRACKING_MODE_ACTIVE default | ALL), enablePersistence: (default on)
+- GlyUser: getId, isSelf, getNickname / setNickname:, getAvatar (GlyImage) / setAvatar: (GlyDrawable), getLocation,
+  getActive (GlyTicket), getActiveStandalone, getTickets, findTicketByInviteCode:, stopWatching. Avatars never download
+  automatically: call load on the image and wait for IMAGE_CHANGED
+- GlyUserTicket (from PLATFORM_INVITE_TICKET/REQUEST): getUser, getTicket, getInvite
+- GlyHistoryManager (your outgoing tickets): isSynced, getTickets, anyActive, refresh, findTicketByTicketId:,
+  findTicketByInviteCode:, enableCancellationTimer: (default off) + setCancellationTimeout:(ms) (stop retrying ticket
+  creation during a long network outage; by default creation is retried until it succeeds)
+
+## 7. Tickets and invites
+- GlyTicket: getId, getCode, getState (TICKET_STATE_*), isMine, isSibling, isActive (own active tickets only),
+  isCompleted, getUser, getInvites, getDuration, getStartTime, getExpireTime, getMessage, getDestination (GlyPlace),
+  getTrack, getEta, getRoute, getTravelMode, isWatching, isSomeoneWatching
+  Mutators (sent tickets): modify:message:destination:, clear:destination:, extend:, expire (same as modify with 0),
+  addInvite:, deleteInvite:, canAddInvite:, own (take over a sibling ticket)
+  Custom data: appendData:name:value: (after TICKET_CREATED), getProperty:name:, getPropertyData:name:,
+  getPartnerData:
+  Request tickets: setRequestEndTime:, getRequestTicket, setRequestNoReply:
+- GlyInvite: getType, getName, getAddress, getCode, getUrl (set once the invite exists), getState (INVITE_STATE_*),
+  getCreatedTime, getLastViewTime, getViewers, getViewing, getText (server-formatted message), getError, setVisible:,
+  setCreateOnly:, setRequestTicket:, initiateClientSideSend, completeClientSideSend:
+- Invite name/address by type: SMS (name optional; phone number required), EMAIL (optional; email required), FACEBOOK /
+  TWITTER (optional / optional), ACCOUNT (optional; Glympse user id required), GROUP (optional; group id or name
+  required), SHARE (app name; app signature required), APP (app name; addressee id optional), CLIPBOARD (blank),
+  LINK (app specific, optional)
+- Delivery: the server sends EMAIL, social; SMS/LINK/CLIPBOARD/SHARE are client
+  delivered: wait for INVITE_STATE_NEEDTOSEND, call initiateClientSideSend (optional), deliver the URL, then
+  completeClientSideSend:(success)
+- Ticket lifetime: sendTicket makes the ticket ADDING and registers it in the history manager. Minimum duration 10 s;
+  default maximum 4 h (getConfig().getMaximumTicketDuration). A ticket can be sent only once
+
+## 8. Config (persisted) and location
+- GlyConfig: setExpireOnArrival: (EXPIRE_ON_ARRIVAL_NONE | NOTIFY (default) | AUTO), allowSpeedSharing:,
+  allowLocationSharing:, setDeleteAfterComplete:, getMaximumTicketDuration, getMaximumNicknameLength, setDiagnosticDataEnabled:,
+  setMetricDirections:, getDeviceId, save
+- GlyLocationManager: getLocation, startLocation / stopLocation:, getLocationState (GlyCoreConstants LOCATION_STATE_
+  NOT_DETERMINED=1, DENIED=2, ACQUIRED=3, ERROR=4), getLocationPermission (LOCATION_PERMISSION_ UNKNOWN=0, DISABLED=1,
+  WHILE_IN_USE=2, ALWAYS=3), getLocationAccuracyAuthorization (LOCATION_ACCURACY_AUTH_FULL=0, REDUCED=1; reduced
+  accuracy is possible from iOS 14)
+- ETA: default ETA_MODE_EXTERNAL (you call updateEta: / updateRoute:); ETA_MODE_INTERNAL needs a destination.
+  Expire on arrival fires PLATFORM_TICKET_ARRIVED and TICKET_ARRIVED
+
+## 9. Constants (GlyGlympseConstants)
+- INVITE_TYPE_*: UNKNOWN=0, ACCOUNT=1, EMAIL=2, SMS=3, TWITTER=4, FACEBOOK=5, LINK=6, GROUP=7, SHARE=8, CLIPBOARD=9,
+  EVERNOTE=10, APP=11
+- INVITE_STATE_*: NONE=0, SERVERSENDING=1, CLIENTSENDING=2, NEEDTOSEND=3, SUCCEEDED=4, DELETING=5, DELETED=6,
+  FAILED_TO_CREATE=7, FAILED_TO_SEND=8, FAILED_TO_DELETE=9
+- INVITE_MODE_*: DEFAULT=0 (view automatically), PROMPT_BEFORE_VIEWING=1, ACTIVATE_USER=2 (combine with DEFAULT:
+  starts tracking). INVITE_ASPECT_*: UNKNOWN, TICKET, REQUEST, CARD
+- TICKET_STATE_*: NONE, ADDING, INVALID, ACTIVE, EXPIRING, EXPIRED, DELETING, DELETED, FAILED_TO_CREATE, CANCELLED
+
+## 10. Flows with exact order
+A. First run: createGlympse -> add listener -> exempt(fromConsent:) (or consent UI + grantConsent) -> start -> STARTED,
+   FIRST_LAUNCH -> ACCOUNT_CREATED -> LOGIN_SUCCEEDED -> SYNCED. Relaunch: STARTED -> LOGIN_SUCCEEDED -> SYNCED.
+B. Send: SYNCED -> createTicket -> createInvite -> add(invite) -> add(listener) -> send(ticket) -> TICKET_CREATED ->
+   TICKET_INVITE_CREATED / _SENT -> (viewers: INVITE_UPDATED) -> modify/extend/expire -> TICKET_EXPIRED -> TICKET_COMPLETED.
+C. View: decodeInvite(code, DEFAULT | ACTIVATE_USER) -> PLATFORM_USER_ADDED -> USER_ACTIVE_TICKET_CHANGED -> ticket
+   events. With DEFAULT only, call getUserManager().startTracking(user). With PROMPT_BEFORE_VIEWING:
+   PLATFORM_INVITE_TICKET -> viewTicket(userTicket) -> startTracking(user).
+D. Active state: app active setActive(true); background setActive(false); one pair per transition; setActive(true)
+   again after start if the app is already active.
+E. Reset: stop -> logout -> new instance -> flow A (FIRST_LAUNCH again).
+F. Push: request authorization -> registerForRemoteNotifications (every launch) -> APNs token (hex string) -> hold it
+   until the platform has started -> registerDeviceToken. Remote notification -> userInfo["payload"] (String) ->
+   handleRemoteNotification (platform must be started) -> completion handler.
+
+## 11. Capabilities matrix (iOS)
+- Info.plist: NSLocationWhenInUseUsageDescription, NSLocationAlwaysAndWhenInUseUsageDescription, optional legacy
+  NSLocationAlwaysUsageDescription (makes the SDK ask for Always), NSMotionUsageDescription (activity recognition)
+- UIBackgroundModes: location, remote-notification
+- Entitlement: aps-environment (development / production)
+- If location status is undetermined when the SDK first starts location, the SDK prompts itself (Always if
+  NSLocationAlwaysUsageDescription is present, else When In Use if NSLocationWhenInUseUsageDescription is)
+- The anonymous account is stored in the Keychain; a reinstall creates a new account
